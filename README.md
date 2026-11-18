@@ -1,4 +1,10 @@
-# Wow forever Bot
+# Wow Forever Bot
+
+## Commands
+
+/dungeons_checklist
+
+/raids_checklist
 
 ```sh
 python3 -m venv .venv
@@ -8,7 +14,7 @@ export DISCORD_TOKEN='votre_nouveau_jeton'
 python main.py
 ```
 
-# wfb.service
+## wfb.service
 
 DISCORD_TOKEN=ton_jeton_discord
 

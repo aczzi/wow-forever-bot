@@ -1,4 +1,4 @@
-"""Discord dungeon checklist, stored in SQLite."""
+"""Discord dungeon and raid checklists, stored in SQLite."""
 from __future__ import annotations
 
 import asyncio
@@ -80,12 +80,14 @@ async def private_list(interaction, lines):
 
 
 async def interaction_error(interaction):
-    text = "An error occurred. Reopen My Choices to check your selections."
+    text = "An error occurred. Reopen your choices to check your selections."
     if interaction.response.is_done():
         await interaction.followup.send(text, ephemeral=True)
     else:
         await interaction.response.send_message(text, ephemeral=True)
 
+
+# --- DUNGEONS VIEWS & LOGIC ---
 
 class ActionButton(discord.ui.Button):
     def __init__(self, bot, action, label):
@@ -174,14 +176,107 @@ class SummaryView(discord.ui.View):
         self.add_item(ActionButton(bot, "players", "Players per Dungeon"))
 
 
+# --- RAIDS VIEWS & LOGIC ---
+
+class RaidSelect(discord.ui.Select):
+    def __init__(self, bot, raids, index, mine):
+        self.bot = bot
+        self.scope = [r['id'] for r in raids]
+        super().__init__(
+            placeholder=f"Completed Raids ({index * 25 + 1}–{index * 25 + len(raids)})",
+            custom_id=f"raid:v1:done:{index}", min_values=0, max_values=len(raids),
+            options=[discord.SelectOption(label=r['name'], value=r['id'], default=r['id'] in mine) for r in raids],
+        )
+
+    async def callback(self, interaction):
+        await interaction.response.defer()
+        async with self.bot.board_lock:
+            self.bot.store.set_raid_selection(
+                interaction.guild_id, interaction.user.id, interaction.user.display_name, self.scope, self.values,
+            )
+            success = await self.bot.refresh_raid_guild(interaction.guild_id)
+        for option in self.options:
+            option.default = option.value in self.values
+        message = "Raid choices saved. You can modify other menus."
+        if not success:
+            message += " Some raid boards could not be refreshed."
+        await interaction.edit_original_response(content=message, view=self.view, allowed_mentions=NO_MENTIONS)
+
+
+class RaidVoteView(discord.ui.View):
+    def __init__(self, bot, guild, user):
+        super().__init__(timeout=600)
+        self.guild, self.user = guild, user
+        mine = {r['raid'] for r in bot.store.raid_votes(guild) if r['user'] == user and r['done']}
+        raids = list(bot.raids_catalogue.values())
+        for index, start in enumerate(range(0, len(raids), 25)):
+            self.add_item(RaidSelect(bot, raids[start:start + 25], index, mine))
+
+    async def interaction_check(self, interaction):
+        return interaction.guild_id == self.guild and interaction.user.id == self.user
+
+    async def on_error(self, interaction, error, item):
+        LOG.error("Raid selection failed", exc_info=(type(error), error, error.__traceback__))
+        await interaction_error(interaction)
+
+
+class RaidActionButton(discord.ui.Button):
+    def __init__(self, bot, action, label):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary, custom_id=f"raid:v1:summary:{action}")
+        self.bot, self.action = bot, action
+
+    async def callback(self, interaction):
+        try:
+            await self.handle(interaction)
+        except Exception:
+            LOG.exception("Raid interaction failed")
+            await interaction_error(interaction)
+
+    async def handle(self, interaction):
+        if interaction.guild_id is None:
+            await interaction.response.send_message("Use this board in a server.", ephemeral=True)
+            return
+        bot = self.bot
+        if self.action == "edit":
+            await interaction.response.send_message(
+                "**My Raids**\nSelect completed raids. Deselect a raid to remove it.",
+                view=RaidVoteView(bot, interaction.guild_id, interaction.user.id),
+                ephemeral=True, allowed_mentions=NO_MENTIONS,
+            )
+            return
+        rows = bot.store.raid_votes(interaction.guild_id)
+        lines = []
+        if self.action == "players":
+            for r_item in bot.raids_catalogue.values():
+                lines.append(f"\n**{safe(r_item['name'])}**")
+                lines.extend([green_names(player_name(r['name'])) for r in rows if r['raid'] == r_item['id'] and r['done']] or [green_names("")])
+        elif self.action == "personal":
+            mine = {r['raid'] for r in rows if r['user'] == interaction.user.id and r['done']}
+            lines.append("**Your Completed Raids**")
+            lines.extend([safe(r_item['name']) for r_item in bot.raids_catalogue.values() if r_item['id'] in mine] or ["None"])
+        await private_list(interaction, lines)
+
+
+class RaidSummaryView(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.add_item(RaidActionButton(bot, "edit", "My Raids"))
+        self.add_item(RaidActionButton(bot, "personal", "My Completed Raids"))
+        self.add_item(RaidActionButton(bot, "players", "Players per Raid"))
+
+
+# --- BOT CLASS ---
+
 class MonBot(discord.Client):
     def __init__(self, *, db_path=None):
         super().__init__(intents=discord.Intents.default(), allowed_mentions=NO_MENTIONS)
         self.store = Store(db_path if db_path is not None else os.environ.get("DONJONS_DB", str(BASE / "donjons.sqlite3")))
         self.catalogue = self.store.catalogue()
+        self.raids_catalogue = self.store.raids_catalogue()
         self.tree = app_commands.CommandTree(self)
         self.board_lock = asyncio.Lock()
         self.tree.add_command(checklist_donjons)
+        self.tree.add_command(raids_checklist)
 
     def summary(self, guild):
         rows = self.store.votes(guild)
@@ -214,7 +309,41 @@ class MonBot(discord.Client):
         if len(description) > 4096:
             raise ValueError("The catalogue exceeds Discord's maximum embed description size.")
         embed = discord.Embed(title="Dungeons", description=description, color=discord.Color.gold())
-        embed.set_footer(text="My Choices: modify completed dungeons · Players per dungeon: complete list.")
+        embed.set_footer(text="")
+        return embed
+
+    def raid_summary(self, guild):
+        rows = self.store.raid_votes(guild)
+        entries = []
+        for r_item in self.raids_catalogue.values():
+            names = [player_name(r['name']) for r in rows if r['raid'] == r_item['id'] and r['done']]
+            entries.append((f"**{safe(r_item['name'])}** ({r_item['min_level']}–{r_item['max_level']})", names))
+
+        def render(limit):
+            lines = []
+            for title, names in entries:
+                kept = []
+                for name in names:
+                    candidate = ", ".join(kept + [name])
+                    suffix = f" … +{len(names) - len(kept) - 1}"
+                    if len(candidate) + len(suffix) > limit:
+                        break
+                    kept.append(name)
+                text = ", ".join(kept)
+                if len(kept) < len(names):
+                    text += f" … +{len(names) - len(kept)}"
+                lines.append(title + "\n" + green_names(text.strip()))
+            return "\n".join(lines)
+
+        limit = 250
+        description = render(limit)
+        while len(description) > 4096 and limit > 0:
+            limit -= 1
+            description = render(limit)
+        if len(description) > 4096:
+            raise ValueError("The raid catalogue exceeds Discord's maximum embed description size.")
+        embed = discord.Embed(title="Raids", description=description, color=discord.Color.dark_purple())
+        embed.set_footer(text="")
         return embed
 
     async def refresh_board(self, guild, channel_id, *, create=False):
@@ -245,8 +374,37 @@ class MonBot(discord.Client):
                 success = False
         return success
 
+    async def refresh_raid_board(self, guild, channel_id, *, create=False):
+        channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
+        if channel.guild.id != guild:
+            raise ValueError("Channel associated with the wrong server")
+        embed, view = self.raid_summary(guild), RaidSummaryView(self)
+        message_id = self.store.raid_message(guild, channel_id)
+        if message_id:
+            try:
+                await channel.get_partial_message(message_id).edit(embed=embed, view=view, allowed_mentions=NO_MENTIONS)
+                return
+            except discord.NotFound:
+                pass
+        if create:
+            message = await channel.send(embed=embed, view=view, allowed_mentions=NO_MENTIONS)
+            self.store.set_raid_message(guild, channel_id, message.id)
+
+    async def refresh_raid_guild(self, guild):
+        success = True
+        for g, channel in self.store.raid_boards():
+            if g != guild:
+                continue
+            try:
+                await self.refresh_raid_board(g, channel)
+            except (discord.HTTPException, ValueError):
+                LOG.exception("Failed to refresh raid board %s", channel)
+                success = False
+        return success
+
     async def setup_hook(self):
         self.add_view(SummaryView(self))
+        self.add_view(RaidSummaryView(self))
         await self.tree.sync()
 
     async def close(self):
@@ -258,6 +416,8 @@ class MonBot(discord.Client):
     async def on_ready(self):
         LOG.info("Logged in as %s", self.user)
 
+
+# --- SLASH COMMANDS ---
 
 @app_commands.command(name="dungeons_checklist", description="Publish or update the compact dungeon board")
 @app_commands.guild_only()
@@ -272,7 +432,7 @@ async def checklist_donjons(interaction: discord.Interaction):
             await bot.refresh_board(interaction.guild_id, interaction.channel_id, create=True)
         await interaction.followup.send("Dungeon board updated into a single message.", ephemeral=True)
     except (ValueError, OSError, sqlite3.Error, discord.HTTPException):
-        LOG.exception("Failed to publish board")
+        LOG.exception("Failed to publish dungeon board")
         await interaction.followup.send("Incomplete publication. Check the SQLite database and bot permissions, then run the command again.", ephemeral=True)
 
 
@@ -282,7 +442,36 @@ async def checklist_error(interaction, error):
         text = "This command requires administrator permissions in a server."
     else:
         LOG.error("Command failed", exc_info=(type(error), error, error.__traceback__))
-        text = "An error occurred while publishing the board."
+        text = "An error occurred while publishing the dungeon board."
+    if interaction.response.is_done():
+        await interaction.followup.send(text, ephemeral=True)
+    else:
+        await interaction.response.send_message(text, ephemeral=True)
+
+
+@app_commands.command(name="raids_checklist", description="Publish or update the compact WoW Forever raids board")
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+async def raids_checklist(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    bot = interaction.client
+    try:
+        async with bot.board_lock:
+            await bot.refresh_raid_board(interaction.guild_id, interaction.channel_id, create=True)
+        await interaction.followup.send("Raids board updated into a single message.", ephemeral=True)
+    except (ValueError, OSError, sqlite3.Error, discord.HTTPException):
+        LOG.exception("Failed to publish raids board")
+        await interaction.followup.send("Incomplete publication. Check the SQLite database and bot permissions, then run the command again.", ephemeral=True)
+
+
+@raids_checklist.error
+async def raids_checklist_error(interaction, error):
+    if isinstance(error, app_commands.CheckFailure):
+        text = "This command requires administrator permissions in a server."
+    else:
+        LOG.error("Raids command failed", exc_info=(type(error), error, error.__traceback__))
+        text = "An error occurred while publishing the raids board."
     if interaction.response.is_done():
         await interaction.followup.send(text, ephemeral=True)
     else:

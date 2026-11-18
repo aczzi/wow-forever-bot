@@ -1,0 +1,20 @@
+[
+  {
+    "id": "barrow_deeps",
+    "name": "Profondeurs des Saisons",
+    "min_level": 60,
+    "max_level": 60
+  },
+  {
+    "id": "hyjal_summit",
+    "name": "Sommet d'Hyjal",
+    "min_level": 60,
+    "max_level": 60
+  },
+  {
+    "id": "onyxias_lair",
+    "name": "Repaire d'Onyxia",
+    "min_level": 60,
+    "max_level": 60
+  }
+]
