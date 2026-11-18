@@ -1,29 +1,28 @@
-"""Stockage SQLite et initialisation du catalogue des donjons."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 import sqlite3
 
-DEFAULT_CATALOGUE = Path(__file__).resolve().with_name("donjons_catalogue.json")
+DEFAULT_CATALOGUE = Path(__file__).resolve().with_name("dungeons.json")
 
 
 def load_catalogue(path):
     catalogue = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(catalogue, list) or not catalogue:
-        raise ValueError("Le catalogue par défaut doit être une liste non vide de donjons.")
+        raise ValueError("The default catalogue must be a non-empty list of dungeons.")
     seen = set()
     for dungeon in catalogue:
         if not isinstance(dungeon, dict):
-            raise ValueError("Chaque donjon doit être un objet JSON.")
+            raise ValueError("Each dungeon must be a JSON object.")
         key, name = dungeon.get("id"), dungeon.get("name")
         lo, hi = dungeon.get("min_level"), dungeon.get("max_level")
         if (not isinstance(key, str) or not 1 <= len(key) <= 100
                 or not isinstance(name, str) or not 1 <= len(name) <= 100
                 or type(lo) is not int or type(hi) is not int or not 0 <= lo <= hi):
-            raise ValueError("Chaque donjon doit avoir un id, un nom et des niveaux valides.")
+            raise ValueError("Each dungeon must have a valid id, name, and levels.")
         if key in seen:
-            raise ValueError(f"Identifiant de donjon dupliqué : {key}")
+            raise ValueError(f"Duplicate dungeon identifier: {key}")
         seen.add(key)
     return catalogue
 
@@ -69,8 +68,8 @@ class Store:
                 value TEXT NOT NULL
             );
         """)
-        # Le JSON sert uniquement à initialiser un catalogue vide.
-        # La transaction évite de laisser un catalogue partiellement rempli.
+        # The JSON is used only to initialize an empty catalogue.
+        # The transaction prevents leaving a partially populated catalogue.
         with self.db:
             if not self.db.execute("SELECT 1 FROM dungeons LIMIT 1").fetchone():
                 catalogue = load_catalogue(catalogue_path)
@@ -92,7 +91,7 @@ class Store:
     def set_selection(self, guild, user, name, scope, selected):
         scope, selected = set(scope), set(selected)
         if not selected <= scope or not scope <= self.catalogue().keys():
-            raise ValueError("Sélection de donjons invalide")
+            raise ValueError("Invalid dungeon selection")
         with self.db:
             self.db.execute("UPDATE votes SET name = ? WHERE guild = ? AND user = ?", (name, guild, user))
             self.db.executemany(
@@ -116,7 +115,7 @@ class Store:
         return [(row['guild'], row['channel']) for row in self.db.execute("SELECT guild, channel FROM messages")]
 
     def import_progression(self, guild):
-        """Attribute une seule fois l'ancienne progression au premier serveur."""
+        """Attributes the old progression to the first server only once."""
         with self.db:
             row = self.db.execute("SELECT value FROM metadata WHERE key = 'pending_progression'").fetchone()
             if not row:
@@ -131,4 +130,3 @@ class Store:
 
     def close(self):
         self.db.close()
-

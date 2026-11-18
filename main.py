@@ -1,4 +1,4 @@
-"""Checklist Discord des donjons, stockée dans SQLite."""
+"""Discord dungeon checklist, stored in SQLite."""
 from __future__ import annotations
 
 import asyncio
@@ -22,9 +22,8 @@ def safe(value):
     return discord.utils.escape_markdown(discord.utils.escape_mentions(str(value)))
 
 
-
 def player_name(value):
-    """Texte brut pour un bloc ANSI, sans séquence de contrôle ni clôture Markdown."""
+    """Raw text for an ANSI block, without control sequences or Markdown closing."""
     text = str(value).replace("\n", " ").replace("\r", " ")
     return re.sub(r"[\x00-\x1f\x7f-\x9f]", "", text).replace("`", "ˋ")
 
@@ -46,7 +45,7 @@ def pages(lines, limit=1700):
             current += ("\n" if current else "") + part
     if current:
         result.append(current)
-    return result or ["Aucune donnée disponible."]
+    return result or ["No data available."]
 
 
 class PrivatePages(discord.ui.View):
@@ -62,13 +61,13 @@ class PrivatePages(discord.ui.View):
     def content(self):
         return self.contents[self.index] + f"\n\n*Page {self.index + 1}/{len(self.contents)}*"
 
-    @discord.ui.button(label="Précédent", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
     async def previous(self, interaction, button):
         self.index = max(0, self.index - 1)
         self.update_buttons()
         await interaction.response.edit_message(content=self.content(), view=self, allowed_mentions=NO_MENTIONS)
 
-    @discord.ui.button(label="Suivant", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
     async def next_page(self, interaction, button):
         self.index = min(len(self.contents) - 1, self.index + 1)
         self.update_buttons()
@@ -81,7 +80,7 @@ async def private_list(interaction, lines):
 
 
 async def interaction_error(interaction):
-    text = "Une erreur est survenue. Rouvre Mes choix pour vérifier tes sélections."
+    text = "An error occurred. Reopen My Choices to check your selections."
     if interaction.response.is_done():
         await interaction.followup.send(text, ephemeral=True)
     else:
@@ -97,17 +96,17 @@ class ActionButton(discord.ui.Button):
         try:
             await self.handle(interaction)
         except Exception:
-            LOG.exception("Échec d'une interaction donjon")
+            LOG.exception("Dungeon interaction failed")
             await interaction_error(interaction)
 
     async def handle(self, interaction):
         if interaction.guild_id is None:
-            await interaction.response.send_message("Utilise ce tableau dans un serveur.", ephemeral=True)
+            await interaction.response.send_message("Use this board in a server.", ephemeral=True)
             return
         bot = self.bot
         if self.action == "edit":
             await interaction.response.send_message(
-                "**Mes choix**\nSélectionne les donjons terminés. Désélectionne un donjon pour le retirer. Chaque menu est enregistré séparément.",
+                "**My Choices**\nSelect completed dungeons. Deselect a dungeon to remove it. Each menu is saved separately.",
                 view=VoteView(bot, interaction.guild_id, interaction.user.id),
                 ephemeral=True, allowed_mentions=NO_MENTIONS,
             )
@@ -120,8 +119,8 @@ class ActionButton(discord.ui.Button):
                 lines.extend([green_names(player_name(r['name'])) for r in rows if r['dungeon'] == d['id'] and r['done']] or [green_names("")])
         elif self.action == "personal":
             mine = {r['dungeon'] for r in rows if r['user'] == interaction.user.id and r['done']}
-            lines.append("**Tes donjons terminés**")
-            lines.extend([safe(d['name']) for d in bot.catalogue.values() if d['id'] in mine] or ["Aucun"])
+            lines.append("**Your Completed Dungeons**")
+            lines.extend([safe(d['name']) for d in bot.catalogue.values() if d['id'] in mine] or ["None"])
         await private_list(interaction, lines)
 
 
@@ -130,7 +129,7 @@ class DungeonSelect(discord.ui.Select):
         self.bot = bot
         self.scope = [d['id'] for d in dungeons]
         super().__init__(
-            placeholder=f"Terminés ({index * 25 + 1}–{index * 25 + len(dungeons)})",
+            placeholder=f"Completed ({index * 25 + 1}–{index * 25 + len(dungeons)})",
             custom_id=f"donjon:v4:done:{index}", min_values=0, max_values=len(dungeons),
             options=[discord.SelectOption(label=d['name'], value=d['id'], default=d['id'] in mine) for d in dungeons],
         )
@@ -144,9 +143,9 @@ class DungeonSelect(discord.ui.Select):
             success = await self.bot.refresh_guild(interaction.guild_id)
         for option in self.options:
             option.default = option.value in self.values
-        message = "Choix enregistrés. Tu peux modifier les autres menus."
+        message = "Choices saved. You can modify other menus."
         if not success:
-            message += " Certains tableaux n’ont pas pu être actualisés."
+            message += " Some boards could not be refreshed."
         await interaction.edit_original_response(content=message, view=self.view, allowed_mentions=NO_MENTIONS)
 
 
@@ -163,16 +162,16 @@ class VoteView(discord.ui.View):
         return interaction.guild_id == self.guild and interaction.user.id == self.user
 
     async def on_error(self, interaction, error, item):
-        LOG.error("Échec de la sélection des donjons", exc_info=(type(error), error, error.__traceback__))
+        LOG.error("Dungeon selection failed", exc_info=(type(error), error, error.__traceback__))
         await interaction_error(interaction)
 
 
 class SummaryView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=None)
-        self.add_item(ActionButton(bot, "edit", "Mes choix"))
-        self.add_item(ActionButton(bot, "personal", "Mes donjons terminés"))
-        self.add_item(ActionButton(bot, "players", "Joueurs par donjon"))
+        self.add_item(ActionButton(bot, "edit", "My Choices"))
+        self.add_item(ActionButton(bot, "personal", "My Completed Dungeons"))
+        self.add_item(ActionButton(bot, "players", "Players per Dungeon"))
 
 
 class MonBot(discord.Client):
@@ -213,15 +212,15 @@ class MonBot(discord.Client):
             limit -= 1
             description = render(limit)
         if len(description) > 4096:
-            raise ValueError("Le catalogue dépasse la taille maximale d'un tableau Discord.")
-        embed = discord.Embed(title="Donjons", description=description, color=discord.Color.gold())
-        embed.set_footer(text="Mes choix : modifier mes donjons terminés · Joueurs par donjon : liste complète.")
+            raise ValueError("The catalogue exceeds Discord's maximum embed description size.")
+        embed = discord.Embed(title="Dungeons", description=description, color=discord.Color.gold())
+        embed.set_footer(text="My Choices: modify completed dungeons · Players per dungeon: complete list.")
         return embed
 
     async def refresh_board(self, guild, channel_id, *, create=False):
         channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
         if channel.guild.id != guild:
-            raise ValueError("Salon associé au mauvais serveur")
+            raise ValueError("Channel associated with the wrong server")
         embed, view = self.summary(guild), SummaryView(self)
         message_id = self.store.message(guild, channel_id)
         if message_id:
@@ -242,7 +241,7 @@ class MonBot(discord.Client):
             try:
                 await self.refresh_board(g, channel)
             except (discord.HTTPException, ValueError):
-                LOG.exception("Impossible d’actualiser le tableau %s", channel)
+                LOG.exception("Failed to refresh board %s", channel)
                 success = False
         return success
 
@@ -257,10 +256,10 @@ class MonBot(discord.Client):
             self.store.close()
 
     async def on_ready(self):
-        LOG.info("Connecté en tant que %s", self.user)
+        LOG.info("Logged in as %s", self.user)
 
 
-@app_commands.command(name="checklist_donjons", description="Publie ou actualise le tableau compact des donjons")
+@app_commands.command(name="dungeons_checklist", description="Publish or update the compact dungeon board")
 @app_commands.guild_only()
 @app_commands.default_permissions(administrator=True)
 @app_commands.checks.has_permissions(administrator=True)
@@ -271,19 +270,19 @@ async def checklist_donjons(interaction: discord.Interaction):
         async with bot.board_lock:
             bot.store.import_progression(interaction.guild_id)
             await bot.refresh_board(interaction.guild_id, interaction.channel_id, create=True)
-        await interaction.followup.send("Tableau des donjons actualisé en un seul message.", ephemeral=True)
+        await interaction.followup.send("Dungeon board updated into a single message.", ephemeral=True)
     except (ValueError, OSError, sqlite3.Error, discord.HTTPException):
-        LOG.exception("Échec de publication du tableau")
-        await interaction.followup.send("Publication incomplète. Vérifie la base SQLite et les permissions du bot, puis relance la commande.", ephemeral=True)
+        LOG.exception("Failed to publish board")
+        await interaction.followup.send("Incomplete publication. Check the SQLite database and bot permissions, then run the command again.", ephemeral=True)
 
 
 @checklist_donjons.error
 async def checklist_error(interaction, error):
     if isinstance(error, app_commands.CheckFailure):
-        text = "Cette commande nécessite les droits administrateur dans un serveur."
+        text = "This command requires administrator permissions in a server."
     else:
-        LOG.error("Échec de la commande", exc_info=(type(error), error, error.__traceback__))
-        text = "Une erreur est survenue lors de la publication du tableau."
+        LOG.error("Command failed", exc_info=(type(error), error, error.__traceback__))
+        text = "An error occurred while publishing the board."
     if interaction.response.is_done():
         await interaction.followup.send(text, ephemeral=True)
     else:
@@ -294,7 +293,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
-        raise SystemExit("Définis DISCORD_TOKEN avant de démarrer le bot.")
+        raise SystemExit("Set DISCORD_TOKEN before starting the bot.")
     MonBot().run(token)
 
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=Bot Discord Wow Forever
+Wants=network-online.target 
+After=network-online.target
+
+[Service] 
+Type=simple
+User=antoine
+WorkingDirectory=/home/antoine/wow-forever-bot
+EnvironmentFile=/home/antoine/wow-forever-bot/wfb.env 
+ExecStart=/home/antoine/wow-forever-bot/.venv/bin/python -u /home/antoine/wow-forever-bot/main.py 
+Restart=on-failure 
+RestartSec=10

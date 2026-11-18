@@ -1,6 +1,4 @@
-# Bot de suivi des donjons
-
-Python 3.11 ou supérieur. Installation et démarrage :
+# Wow forever Bot
 
 ```sh
 python3 -m venv .venv
@@ -10,7 +8,11 @@ export DISCORD_TOKEN='votre_nouveau_jeton'
 python main.py
 ```
 
-# discord-donjon.service
+# wfb.service
 
 DISCORD_TOKEN=ton_jeton_discord
 
+set up /etc/systemd/system/wfb.service
+
+systemctl daemon-reload
+systemctl start wfb
