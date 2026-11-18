@@ -1,0 +1,13 @@
+[Unit] 
+Description=Bot Discord
+Wants=network-online.target 
+After=network-online.target
+
+[Service] 
+Type=simple 
+User=antoine
+WorkingDirectory=/home/antoine/wow-dungeon-report
+EnvironmentFile=/home/antoine/wow-dungeon-report/discord-donjon.env 
+ExecStart=/home/antoine/wow-dungeon-report/.venv/bin/python -u /home/antoine/wow-dungeon-report/main.py 
+Restart=on-failure 
+RestartSec=10
